@@ -118,6 +118,7 @@
       {
         "ts-ignore": "allow-with-description"
       }
-    ]
+    ],
+    "@typescript-eslint/no-empty-function": 0
   }
 }
