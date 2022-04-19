@@ -182,7 +182,7 @@ describe('index', () => {
     expect(await g1.next()).toStrictEqual({ value: 'second', done: false });
     expect(await g1.next()).toStrictEqual({ value: 'last', done: true });
     // Noop resource
-    const g2 = await withG(
+    const g2 = withG(
       [
         async () => {
           return [async () => {}];
