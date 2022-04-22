@@ -17,7 +17,7 @@ async function withF<
   let e_: Error | undefined;
   try {
     for (const acquire of acquires) {
-      const [release, resource] = await acquire();
+      const [release, resource] = await acquire(resources);
       releases.push(release);
       resources.push(resource);
     }
@@ -54,7 +54,7 @@ async function* withG<
   let e_: Error | undefined;
   try {
     for (const acquire of acquires) {
-      const [release, resource] = await acquire();
+      const [release, resource] = await acquire(resources);
       releases.push(release);
       resources.push(resource);
     }
