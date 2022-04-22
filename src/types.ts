@@ -1,5 +1,5 @@
 type ResourceAcquire<Resource> = (
-  resources: readonly any[],
+  resources?: readonly any[],
 ) => Promise<readonly [ResourceRelease, Resource?]>;
 
 type ResourceRelease = (e?: Error) => Promise<void>;

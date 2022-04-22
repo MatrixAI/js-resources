@@ -250,8 +250,8 @@ describe('index', () => {
     await withF(
       [
         async () => [async () => {}, 1],
-        async ([a]) => [async () => {}, a + 1],
-        async ([, b]) => [async () => {}, b + 1],
+        async ([a] = []) => [async () => {}, a + 1],
+        async ([, b] = []) => [async () => {}, b + 1],
       ],
       async ([a, b, c]) => {
         expect(a).toBe(1);
@@ -264,8 +264,8 @@ describe('index', () => {
     const g = withG(
       [
         async () => [async () => {}, 1],
-        async ([a]) => [async () => {}, a + 1],
-        async ([, b]) => [async () => {}, b + 1],
+        async ([a]: [number]) => [async () => {}, a + 1],
+        async ([, b]: [number, number]) => [async () => {}, b + 1],
       ],
       async function* ([a, b, c]): AsyncGenerator<number> {
         yield a;
