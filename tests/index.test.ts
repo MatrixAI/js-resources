@@ -82,7 +82,7 @@ describe('index', () => {
     // Multiple resources outside requires type declaration
     const resourceAcquires6: [
       ResourceAcquire<number>,
-      ResourceAcquire,
+      ResourceAcquire<void>,
       ResourceAcquire<string>,
     ] = [
       async () => {
@@ -245,5 +245,38 @@ describe('index', () => {
     expect(lock2.isLocked()).toBe(false);
     expect(acquireOrder).toStrictEqual([lock1, lock2]);
     expect(releaseOrder).toStrictEqual([lock2, lock1]);
+  });
+  test('withF parameterised resources', async () => {
+    await withF(
+      [
+        async () => [async () => {}, 1],
+        async ([a]) => [async () => {}, a + 1],
+        async ([, b]) => [async () => {}, b + 1],
+      ],
+      async ([a, b, c]) => {
+        expect(a).toBe(1);
+        expect(b).toBe(2);
+        expect(c).toBe(3);
+      },
+    );
+  });
+  test('withG parameterised resources', async () => {
+    const g = withG(
+      [
+        async () => [async () => {}, 1],
+        async ([a]) => [async () => {}, a + 1],
+        async ([, b]) => [async () => {}, b + 1],
+      ],
+      async function* ([a, b, c]): AsyncGenerator<number> {
+        yield a;
+        yield b;
+        yield c;
+      },
+    );
+    let counter = 1;
+    for await (const r of g) {
+      expect(r).toBe(counter);
+      counter++;
+    }
   });
 });
