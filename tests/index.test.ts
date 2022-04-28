@@ -279,4 +279,54 @@ describe('index', () => {
       counter++;
     }
   });
+  test('withG generator delegation', async () => {
+    const contextResource: ResourceAcquire<object> = async () => {
+      const context = {};
+      return [
+        async () => {
+          Object.keys(context).forEach((key) => delete context[key]);
+        },
+        context,
+      ];
+    };
+    // This is the proper way of delegating generators
+    const delegatingGenerator = async function* (
+      context?: object,
+    ): AsyncGenerator<string, string> {
+      if (context == null) {
+        // Notice the usage of `return yield*`
+        // If you just return `withG`, that would make the internal generator the return value
+        // It is only necessary because `delegatingGenerator` is also an async generator function
+        return yield* withG([contextResource], ([context]) =>
+          delegatingGenerator(context),
+        );
+      }
+      context['key'] = 'value';
+      yield context['key'];
+      return 'done';
+    };
+    const g = delegatingGenerator();
+    let values: Array<string> = [];
+    // Only while loops can acquire the return value of generators
+    let done: boolean | undefined = false;
+    while (!done) {
+      let value: string | undefined;
+      ({ value, done } = await g.next());
+      values.push(value);
+    }
+    expect(values).toStrictEqual(['value', 'done']);
+    expect(await g.next()).toStrictEqual({ value: undefined, done: true });
+    // Normal functions and arrow functions can just return the generator
+    // they do not use `yield*`
+    const delegatingFunction = (): AsyncGenerator<string, string> => {
+      return delegatingGenerator();
+    };
+    values = [];
+    // For await loops will drop the return value of generators
+    for await (const value of delegatingFunction()) {
+      values.push(value);
+    }
+    expect(values).toStrictEqual(['value']);
+    expect(await g.next()).toStrictEqual({ value: undefined, done: true });
+  });
 });
