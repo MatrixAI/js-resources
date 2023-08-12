@@ -1,6 +1,6 @@
-import type { ResourceAcquire } from '@';
+import type { ResourceAcquire } from '#index.js';
 import { Mutex } from 'async-mutex';
-import { withF, withG } from '@';
+import { withF, withG } from '#index.js';
 
 describe('index', () => {
   test('withF resource context', async () => {

@@ -1,4 +1,4 @@
-import type { ResourceAcquire, ResourceRelease, Resources } from './types';
+import type { ResourceAcquire, ResourceRelease, Resources } from './types.js';
 
 /**
  * Make sure to explicitly declare or cast `acquires` as a tuple using `[ResourceAcquire...]` or `as const`
