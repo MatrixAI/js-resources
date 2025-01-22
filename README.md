@@ -1,8 +1,5 @@
 # js-resources
 
-staging:[![pipeline status](https://gitlab.com/MatrixAI/open-source/js-resources/badges/staging/pipeline.svg)](https://gitlab.com/MatrixAI/open-source/js-resources/commits/staging)
-master:[![pipeline status](https://gitlab.com/MatrixAI/open-source/js-resources/badges/master/pipeline.svg)](https://gitlab.com/MatrixAI/open-source/js-resources/commits/master)
-
 Resource context management inspired by Python's `with` context manager and Haskell's bracket pattern.
 
 ## Installation
@@ -13,7 +10,7 @@ npm install --save @matrixai/resources
 
 ## Development
 
-Run `nix-shell`, and once you're inside, you can use:
+Run `nix develop`, and once you're inside, you can use:
 
 ```sh
 # install (or reinstall packages from package.json)
