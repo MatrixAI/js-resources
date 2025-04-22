@@ -64,3 +64,4 @@ npm run build
 npm publish --access public
 git push
 git push --tags
+```
