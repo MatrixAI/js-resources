@@ -1,6 +1,7 @@
 # js-resources
 
-Resource context management inspired by Python's `with` context manager and Haskell's bracket pattern.
+Resource context management inspired by Python's `with` context manager and
+Haskell's bracket pattern.
 
 ## Installation
 
