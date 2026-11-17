@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "rootDir": ".",
     "outDir": "./dist",
     "tsBuildInfoFile": "./dist/tsbuildinfo",
     "incremental": true,
@@ -7,17 +8,21 @@
     "declaration": true,
     "allowJs": true,
     "strictNullChecks": true,
+    "strictFunctionTypes": true,
     "noImplicitAny": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "moduleResolution": "NodeNext",
-    "module": "ESNext",
+    "module": "NodeNext",
     "target": "ES2022",
-    "baseUrl": "./src",
+    "lib": ["ES2022", "ESNext.Disposable"],
     "paths": {
-      "#*": ["*"]
+      "@matrixai/resources": ["./dist/index.d.ts"],
+      "@matrixai/resources/functions": ["./dist/functions/index.d.ts"],
+      "@matrixai/resources/decorators": ["./dist/decorators/index.d.ts"],
+      "#*": ["./src/*"]
     },
     "skipLibCheck": true,
     "noEmit": true
@@ -25,8 +30,8 @@
   "include": [
     "./src/**/*",
     "./src/**/*.json",
-    "./tests/**/*",
-    "./scripts/**/*",
-    "./benches/**/*"
+    "./tests/**/*.test.ts",
+    "./tests/**/*.test-d.ts",
+    "./vitest.config.mts"
   ]
 }
