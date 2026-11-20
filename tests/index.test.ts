@@ -1,332 +1,425 @@
-import type { ResourceAcquire } from '#index.js';
-import { Mutex } from 'async-mutex';
-import { withF, withG } from '#index.js';
+import type { ContextBodyExit } from '@matrixai/contexts';
+import { describe, expect, test } from 'vitest';
+import { createResourceScope, withF, withG } from '@matrixai/resources';
 
-describe('index', () => {
-  test('withF resource context', async () => {
-    // No resources
-    const result1 = await withF([], async () => {
-      return 'bar';
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+describe('resource ownership', () => {
+  test('direct lists support synchronous and asynchronous bodies', async () => {
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => ({
+        resource: 2,
+        release: () => {
+          events.push('release');
+        },
+      }),
+    ] as const;
+    expect(await withF(acquisitions, ([value]) => value + 1)).toBe(3);
+    expect(await withF(acquisitions, async ([value]) => value + 2)).toBe(4);
+    expect(events).toEqual(['release', 'release']);
+  });
+
+  test('synchronous generators are driven asynchronously through cleanup', async () => {
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => ({
+        resource: 2,
+        release: async () => {
+          events.push('release');
+        },
+      }),
+    ] as const;
+    const iterator = withG(acquisitions, function* ([value]) {
+      try {
+        yield value;
+      } finally {
+        events.push('finally');
+      }
     });
-    expect(result1).toBe('bar');
-    // Noop resource
-    const result2 = await withF(
-      [
-        async () => {
-          return [async () => {}];
-        },
-      ],
+    expect(await iterator.next()).toEqual({ value: 2, done: false });
+    await iterator.return(undefined);
+    expect(events).toEqual(['finally', 'release']);
+  });
+
+  test('acquires sequentially with snapshots and releases in reverse order', async () => {
+    const events: Array<string> = [];
+    const acquisitions = [
       async () => {
-        return 'foo';
+        events.push('acquire:first');
+        return {
+          resource: 3,
+          release: () => {
+            events.push('release:first');
+          },
+        };
       },
-    );
-    expect(result2).toBe('foo');
-    // Counter resource
-    let counter = 1;
-    const result3 = await withF(
-      [
-        async () => {
-          counter++;
-          return [
-            async () => {
-              counter--;
-            },
-            counter,
-          ];
-        },
-      ],
-      async ([c]) => {
-        expect(c).toBe(2);
-        return c / 2;
-      },
-    );
-    expect(result3).toBe(1);
-    expect(counter).toBe(1);
-    // Multiple resources
-    const result4 = await withF(
-      [
-        async () => {
-          return [async () => {}, 123];
-        },
-        async () => {
-          return [async () => {}];
-        },
-        async () => {
-          return [async () => {}, 'hello world'];
-        },
-      ],
-      async ([n, u, s]) => {
-        expect(u).toBe(undefined);
-        return [n, s];
-      },
-    );
-    expect(result4).toStrictEqual([123, 'hello world']);
-    // Multiple resources, but only take the first
-    const result5 = await withF(
-      [
-        async () => {
-          return [async () => {}, 123];
-        },
-        async () => {
-          return [async () => {}];
-        },
-        async () => {
-          return [async () => {}, 'hello world'];
-        },
-      ],
-      async ([n]) => {
-        return n;
-      },
-    );
-    expect(result5).toBe(123);
-    // Multiple resources outside requires type declaration
-    const resourceAcquires6: [
-      ResourceAcquire<number>,
-      ResourceAcquire<void>,
-      ResourceAcquire<string>,
-    ] = [
-      async () => {
-        return [async () => {}, 123];
-      },
-      async () => {
-        return [async () => {}];
-      },
-      async () => {
-        return [async () => {}, 'hello world'];
-      },
-    ];
-    const result6 = await withF(resourceAcquires6, async ([n, u, s]) => {
-      expect(u).toBe(undefined);
-      return [n, s];
-    });
-    expect(result6).toStrictEqual([123, 'hello world']);
-    // Multiple resources outside can also use const
-    const resourceAcquires7 = [
-      async () => {
-        return [async () => {}, 123] as const;
-      },
-      async () => {
-        return [async () => {}] as const;
-      },
-      async () => {
-        return [async () => {}, 'hello world'] as const;
+      async ([first]: readonly [number]) => {
+        expect(first).toBe(3);
+        events.push('acquire:second');
+        return {
+          resource: String(first),
+          release: () => {
+            events.push('release:second');
+          },
+        };
       },
     ] as const;
-    const result7 = await withF(resourceAcquires7, async ([n, u, s]) => {
-      expect(u).toBe(undefined);
-      return [n, s];
-    });
-    expect(result7).toStrictEqual([123, 'hello world']);
-    // It must be given a explicit type, or `as const` can be used internally
-    const acquire8: ResourceAcquire<number> = async () => {
-      return [async () => {}, 123];
-    };
-    const result8 = await withF([acquire8], async () => {
-      return 'done';
-    });
-    expect(result8).toBe('done');
-    const acquire9 = async () => {
-      return [async () => {}, 123] as const;
-    };
-    const result9 = await withF([acquire9], async () => {
-      return 'done';
-    });
-    expect(result9).toBe('done');
-    // Order of acquisition is left to right
-    // Order of release is right ot left
-    const lock1 = new Mutex();
-    const lock2 = new Mutex();
-    const acquireOrder: Array<Mutex> = [];
-    const releaseOrder: Array<Mutex> = [];
-    await withF(
-      [
-        async () => {
-          const release = await lock1.acquire();
-          acquireOrder.push(lock1);
-          return [
-            async () => {
-              releaseOrder.push(lock1);
-              release();
-            },
-            lock1,
-          ];
-        },
-        async () => {
-          const release = await lock2.acquire();
-          acquireOrder.push(lock2);
-          return [
-            async () => {
-              releaseOrder.push(lock2);
-              release();
-            },
-            lock2,
-          ];
-        },
-      ],
-      async ([l1, l2]) => {
-        expect(l1.isLocked()).toBe(true);
-        expect(l2.isLocked()).toBe(true);
-      },
-    );
-    expect(acquireOrder).toStrictEqual([lock1, lock2]);
-    expect(releaseOrder).toStrictEqual([lock2, lock1]);
+    expect(
+      await withF(acquisitions, ([first, second]) => `${first}:${second}`),
+    ).toBe('3:3');
+    expect(events).toEqual([
+      'acquire:first',
+      'acquire:second',
+      'release:second',
+      'release:first',
+    ]);
   });
-  test('withG resource context', async () => {
-    // No resources
-    const g1 = withG([], async function* () {
-      yield 'first';
-      yield 'second';
-      return 'last';
-    });
-    expect(await g1.next()).toStrictEqual({ value: 'first', done: false });
-    expect(await g1.next()).toStrictEqual({ value: 'second', done: false });
-    expect(await g1.next()).toStrictEqual({ value: 'last', done: true });
-    // Noop resource
-    const g2 = withG(
-      [
-        async () => {
-          return [async () => {}];
+
+  test.each([0, 1, 2])(
+    'rolls back completed acquisitions when step %i fails',
+    async (failure) => {
+      const events: Array<number> = [];
+      const reason = { failure };
+      const step = (index: number) => async () => {
+        if (index === failure) throw reason;
+        return {
+          resource: index,
+          release: () => {
+            events.push(index);
+          },
+        };
+      };
+      await expect(
+        withF([step(0), step(1), step(2)], () => 'unreachable'),
+      ).rejects.toBe(reason);
+      expect(events).toEqual(
+        Array.from({ length: failure }, (_, i) => failure - i - 1),
+      );
+    },
+  );
+
+  test('preserves arbitrary primary failures and every cleanup failure', async () => {
+    const primary = undefined;
+    const first = { cleanup: 1 };
+    const second = 'cleanup:2';
+    const exits: Array<ContextBodyExit<unknown>> = [];
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: (exit: ContextBodyExit<unknown>) => {
+          exits.push(exit);
+          throw first;
         },
-      ],
-      async function* () {
-        yield 'first';
-        return 'last';
-      },
-    );
-    expect(await g2.next()).toStrictEqual({ value: 'first', done: false });
-    expect(await g2.next()).toStrictEqual({ value: 'last', done: true });
-    // Order of acquisition is left to right
-    // Order of release is right ot left
-    const lock1 = new Mutex();
-    const lock2 = new Mutex();
-    const acquireOrder: Array<Mutex> = [];
-    const releaseOrder: Array<Mutex> = [];
-    const g3 = withG(
-      [
-        async () => {
-          const release = await lock1.acquire();
-          acquireOrder.push(lock1);
-          return [
-            async () => {
-              releaseOrder.push(lock1);
-              release();
-            },
-            lock1,
-          ];
+      }),
+      () => ({
+        resource: 2,
+        release: (exit: ContextBodyExit<unknown>) => {
+          exits.push(exit);
+          throw second;
         },
-        async () => {
-          const release = await lock2.acquire();
-          acquireOrder.push(lock2);
-          return [
-            async () => {
-              releaseOrder.push(lock2);
-              release();
-            },
-            lock2,
-          ];
-        },
-      ],
-      async function* ([l1, l2]) {
-        expect(l1.isLocked()).toBe(true);
-        expect(l2.isLocked()).toBe(true);
-        yield 'first';
-        yield 'second';
-        return 'last';
-      },
-    );
-    expect(await g3.next()).toStrictEqual({ value: 'first', done: false });
-    expect(lock1.isLocked()).toBe(true);
-    expect(lock2.isLocked()).toBe(true);
-    expect(await g3.next()).toStrictEqual({ value: 'second', done: false });
-    expect(lock1.isLocked()).toBe(true);
-    expect(lock2.isLocked()).toBe(true);
-    expect(await g3.next()).toStrictEqual({ value: 'last', done: true });
-    expect(lock1.isLocked()).toBe(false);
-    expect(lock2.isLocked()).toBe(false);
-    expect(acquireOrder).toStrictEqual([lock1, lock2]);
-    expect(releaseOrder).toStrictEqual([lock2, lock1]);
+      }),
+    ] as const;
+    let caught: unknown;
+    try {
+      await withF(acquisitions, () => {
+        throw primary;
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(SuppressedError);
+    const combined = caught as SuppressedError;
+    expect(combined.suppressed).toBe(primary);
+    expect((combined.error as AggregateError).errors).toEqual([second, first]);
+    expect(exits).toEqual([
+      { status: 'rejected', reason: primary },
+      { status: 'rejected', reason: primary },
+    ]);
   });
-  test('withF parameterised resources', async () => {
-    await withF(
-      [
-        async () => [async () => {}, 1],
-        async ([a] = []) => [async () => {}, a + 1],
-        async ([, b] = []) => [async () => {}, b + 1],
-      ],
-      async ([a, b, c]) => {
-        expect(a).toBe(1);
-        expect(b).toBe(2);
-        expect(c).toBe(3);
+
+  test('preserves rollback errors alongside acquisition failure', async () => {
+    const primary = new Error('acquire');
+    const cleanup = new Error('release');
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: () => {
+          throw cleanup;
+        },
+      }),
+      () => {
+        throw primary;
       },
-    );
-  });
-  test('withG parameterised resources', async () => {
-    const g = withG(
-      [
-        async () => [async () => {}, 1],
-        async ([a]: [number]) => [async () => {}, a + 1],
-        async ([, b]: [number, number]) => [async () => {}, b + 1],
-      ],
-      async function* ([a, b, c]): AsyncGenerator<number> {
-        yield a;
-        yield b;
-        yield c;
-      },
-    );
-    let counter = 1;
-    for await (const r of g) {
-      expect(r).toBe(counter);
-      counter++;
+    ] as const;
+    try {
+      await withF(acquisitions, () => undefined);
+      throw new Error('expected failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SuppressedError);
+      expect((error as SuppressedError).suppressed).toBe(primary);
+      expect(
+        ((error as SuppressedError).error as AggregateError).errors,
+      ).toEqual([cleanup]);
     }
   });
-  test('withG generator delegation', async () => {
-    const contextResource: ResourceAcquire<object> = async () => {
-      const context = {};
-      return [
-        async () => {
-          Object.keys(context).forEach((key) => delete context[key]);
+
+  test('reports every release failure even when the body succeeds', async () => {
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: () => {
+          throw 'first';
         },
-        context,
-      ];
-    };
-    // This is the proper way of delegating generators
-    const delegatingGenerator = async function* (
-      context?: object,
-    ): AsyncGenerator<string, string> {
-      if (context == null) {
-        // Notice the usage of `return yield*`
-        // If you just return `withG`, that would make the internal generator the return value
-        // It is only necessary because `delegatingGenerator` is also an async generator function
-        return yield* withG([contextResource], ([context]) =>
-          delegatingGenerator(context),
-        );
+      }),
+      () => ({
+        resource: 2,
+        release: () => {
+          throw 'second';
+        },
+      }),
+    ] as const;
+    await expect(withF(acquisitions, () => 3)).rejects.toMatchObject({
+      errors: ['second', 'first'],
+    });
+  });
+
+  test('holds resources until represented body and release have completed', async () => {
+    const body = deferred<void>();
+    const release = deferred<void>();
+    const releasing = deferred<void>();
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: async () => {
+          events.push('release');
+          releasing.resolve();
+          await release.promise;
+        },
+      }),
+    ] as const;
+    let settled = false;
+    const result = withF(acquisitions, async () => {
+      events.push('body');
+      await body.promise;
+      return 42;
+    }).then((value) => {
+      settled = true;
+      return value;
+    });
+    body.resolve();
+    await releasing.promise;
+    expect(settled).toBe(false);
+    release.resolve();
+    expect(await result).toBe(42);
+    expect(events).toEqual(['body', 'release']);
+  });
+
+  test('an already aborted signal prevents acquisition', async () => {
+    const reason = { aborted: true };
+    const controller = new AbortController();
+    controller.abort(reason);
+    let acquired = false;
+    const acquisitions = [
+      () => {
+        acquired = true;
+        return { resource: 1, release: () => {} };
+      },
+    ] as const;
+    await expect(
+      withF(acquisitions, () => undefined, { signal: controller.signal }),
+    ).rejects.toBe(reason);
+    expect(acquired).toBe(false);
+  });
+
+  test('rolls back a lease acquired after cancellation without entering the body', async () => {
+    const pending = deferred<void>();
+    const entered = deferred<void>();
+    const controller = new AbortController();
+    const reason = { cancelled: true };
+    const events: Array<string> = [];
+    const acquisitions = [
+      async () => {
+        entered.resolve();
+        await pending.promise;
+        return {
+          resource: 1,
+          release: () => {
+            events.push('release');
+          },
+        };
+      },
+    ] as const;
+    const result = withF(
+      acquisitions,
+      () => {
+        events.push('body');
+      },
+      { signal: controller.signal },
+    );
+    await entered.promise;
+    controller.abort(reason);
+    pending.resolve();
+    await expect(result).rejects.toBe(reason);
+    expect(events).toEqual(['release']);
+  });
+
+  test('cancellation during body does not release until body finishes', async () => {
+    const body = deferred<void>();
+    const entered = deferred<void>();
+    const controller = new AbortController();
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: () => {
+          events.push('release');
+        },
+      }),
+    ] as const;
+    const result = withF(
+      acquisitions,
+      async () => {
+        entered.resolve();
+        await body.promise;
+      },
+      { signal: controller.signal },
+    );
+    await entered.promise;
+    controller.abort();
+    expect(events).toEqual([]);
+    body.resolve();
+    await result;
+    expect(events).toEqual(['release']);
+  });
+
+  test('composes scopes and retains outer resources through inner cleanup', async () => {
+    const events: Array<string> = [];
+    const outer = createResourceScope([
+      () => ({
+        resource: 'outer',
+        release: () => {
+          events.push('outer');
+        },
+      }),
+    ] as const);
+    const inner = createResourceScope([
+      () => ({
+        resource: 'inner',
+        release: () => {
+          events.push('inner');
+        },
+      }),
+    ] as const);
+    const operation = outer(async ({ resources }) => {
+      expect(resources).toEqual(['outer']);
+      return inner(async ({ resources: nested }) => {
+        expect(nested).toEqual(['inner']);
+        return 'done';
+      })({});
+    });
+    expect(await operation({})).toBe('done');
+    expect(events).toEqual(['inner', 'outer']);
+  });
+
+  test('generator is lazy, owns suspended yields and releases on close', async () => {
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => {
+        events.push('acquire');
+        return {
+          resource: 1,
+          release: () => {
+            events.push('release');
+          },
+        };
+      },
+    ] as const;
+    const untouched = withG(acquisitions, async function* () {
+      yield 1;
+    });
+    await untouched.return(undefined);
+    expect(events).toEqual([]);
+    const generator = withG(acquisitions, async function* ([value]) {
+      try {
+        yield value;
+      } finally {
+        events.push('finally');
       }
-      context['key'] = 'value';
-      yield context['key'];
-      return 'done';
-    };
-    const g = delegatingGenerator();
-    let values: Array<string> = [];
-    // Only while loops can acquire the return value of generators
-    let done: boolean | undefined = false;
-    while (!done) {
-      let value: string | undefined;
-      ({ value, done } = await g.next());
-      values.push(value);
+    });
+    expect(events).toEqual([]);
+    expect(await generator.next()).toEqual({ value: 1, done: false });
+    expect(events).toEqual(['acquire']);
+    await generator.return(undefined);
+    expect(events).toEqual(['acquire', 'finally', 'release']);
+  });
+
+  test('generator rejects overlap and yielded disposal requires advancement', async () => {
+    const pending = deferred<void>();
+    const entered = deferred<void>();
+    const events: Array<string> = [];
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: () => {
+          events.push('release');
+        },
+      }),
+    ] as const;
+    const generator = withG(acquisitions, async function* () {
+      try {
+        entered.resolve();
+        await pending.promise;
+        yield 1;
+      } finally {
+        yield 2;
+      }
+    });
+    const first = generator.next();
+    await entered.promise;
+    await expect(generator.next()).rejects.toThrow('Overlapping');
+    pending.resolve();
+    expect((await first).value).toBe(1);
+    await expect(generator[Symbol.asyncDispose]()).rejects.toThrow(
+      'explicit advancement',
+    );
+    expect(events).toEqual([]);
+    expect((await generator.next()).done).toBe(true);
+    expect(events).toEqual(['release']);
+  });
+
+  test('generator failure and release failure remain observable together', async () => {
+    const primary = new Error('generator');
+    const cleanup = new Error('release');
+    const acquisitions = [
+      () => ({
+        resource: 1,
+        release: () => {
+          throw cleanup;
+        },
+      }),
+    ] as const;
+    const iterator = withG(acquisitions, async function* () {
+      yield 1;
+      throw primary;
+    });
+    await iterator.next();
+    try {
+      await iterator.next();
+      throw new Error('expected failure');
+    } catch (error) {
+      expect(error).toBeInstanceOf(SuppressedError);
+      expect((error as SuppressedError).suppressed).toBe(primary);
+      expect(
+        ((error as SuppressedError).error as AggregateError).errors,
+      ).toEqual([cleanup]);
     }
-    expect(values).toStrictEqual(['value', 'done']);
-    expect(await g.next()).toStrictEqual({ value: undefined, done: true });
-    // Normal functions and arrow functions can just return the generator
-    // they do not use `yield*`
-    const delegatingFunction = (): AsyncGenerator<string, string> => {
-      return delegatingGenerator();
-    };
-    values = [];
-    // For await loops will drop the return value of generators
-    for await (const value of delegatingFunction()) {
-      values.push(value);
-    }
-    expect(values).toStrictEqual(['value']);
-    expect(await g.next()).toStrictEqual({ value: undefined, done: true });
   });
 });
