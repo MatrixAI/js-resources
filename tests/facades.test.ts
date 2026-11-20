@@ -11,6 +11,17 @@ type RequestContext = {
 };
 
 describe('resource function and standard method facades', () => {
+  test('wildcard exports retain existing and nested package subpaths', async () => {
+    const index = await import('@matrixai/resources/index.js');
+    const utils = await import('@matrixai/resources/utils.js');
+    const types = await import('@matrixai/resources/types.js');
+    const functions = await import('@matrixai/resources/functions/index.js');
+    expect(index.requireResources).toBe(requireResources);
+    expect(utils.withF).toBeDefined();
+    expect(types).toBeDefined();
+    expect(functions.resourceful).toBe(resourceful);
+  });
+
   test('resource facades preserve active lifecycle admission without reviving stale tokens', async () => {
     const gate = new LifecycleGate();
     const original = { requestId: 'request' };

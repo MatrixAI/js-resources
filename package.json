@@ -23,18 +23,11 @@
       "types": "./dist/decorators/index.d.ts",
       "import": "./dist/decorators/index.js"
     },
-    "./index.js": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
     },
-    "./types.js": {
-      "types": "./dist/types.d.ts",
-      "import": "./dist/types.js"
-    },
-    "./utils.js": {
-      "types": "./dist/utils.d.ts",
-      "import": "./dist/utils.js"
-    }
+    "./*": "./dist/*"
   },
   "imports": {
     "#*": "./dist/*"
