@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest';
+import { LifecycleGate } from '@matrixai/async-init/lifecycle/index.js';
 import { requireResources } from '@matrixai/resources';
 import { resourceful } from '@matrixai/resources/functions';
 import { resourceful as resourcefulMethod } from '@matrixai/resources/decorators';
@@ -10,6 +11,76 @@ type RequestContext = {
 };
 
 describe('resource function and standard method facades', () => {
+  test('resource facades preserve active lifecycle admission without reviving stale tokens', async () => {
+    const gate = new LifecycleGate();
+    const original = { requestId: 'request' };
+    const projected: RequestContext[] = [];
+    let released = 0;
+    const acquisitions = [
+      () => ({
+        resource: 7,
+        release: () => {
+          released++;
+        },
+      }),
+    ] as const;
+    function inspect(context: RequestContext): number {
+      expect(gate.currentAccess(context)).toBe('reader');
+      projected.push(context);
+      return requireResources(context)[0];
+    }
+    function* generator(
+      context: RequestContext,
+    ): Generator<number, void, unknown> {
+      yield inspect(context);
+    }
+    async function* asyncGenerator(
+      context: RequestContext,
+    ): AsyncGenerator<number, void, unknown> {
+      yield inspect(context);
+    }
+    const options = { context: 0 as const, acquisitions };
+    class Service {
+      @resourcefulMethod({ ...options, kind: 'async' })
+      async read(context: RequestContext) {
+        return inspect(context);
+      }
+    }
+    await gate.runReader(async (admitted) => {
+      const context = admitted as RequestContext;
+      expect(resourceful(inspect, { ...options, kind: 'sync' })(context)).toBe(
+        7,
+      );
+      await expect(
+        resourceful(async (value: RequestContext) => inspect(value), {
+          ...options,
+          kind: 'async',
+        })(context),
+      ).resolves.toBe(7);
+      expect([
+        ...resourceful(generator, { ...options, kind: 'generator' })(context),
+      ]).toEqual([7]);
+      const values: number[] = [];
+      for await (const value of resourceful(asyncGenerator, {
+        ...options,
+        kind: 'async-generator',
+      })(context)) {
+        values.push(value);
+      }
+      expect(values).toEqual([7]);
+      await expect(new Service().read(context)).resolves.toBe(7);
+    }, original);
+    expect(released).toBe(5);
+    expect(projected).toHaveLength(5);
+    await gate.runWriter((admitted) => {
+      expect(gate.currentAccess(admitted)).toBe('writer');
+      for (const stale of projected) {
+        expect(gate.currentAccess(stale)).toBeUndefined();
+        expect(gate.tryRunReaderSync(() => 'bypassed', stale)).toBeUndefined();
+      }
+    }, original);
+  });
+
   test('preserves the receiver, arguments, result and cleanup for sync and async methods', async () => {
     const events: Array<string> = [];
     const acquisitions = [
@@ -107,6 +178,8 @@ describe('resource function and standard method facades', () => {
 
   test('selects acquisitions per receiver and arguments, preserving record descriptors', () => {
     const events: Array<string> = [];
+    const admission = Symbol('admission');
+    const token = {};
     class Service {
       public readonly prefix = 'service';
     }
@@ -114,6 +187,12 @@ describe('resource function and standard method facades', () => {
       expect(
         Object.getOwnPropertyDescriptor(context, 'hidden')?.enumerable,
       ).toBe(false);
+      expect(Object.getOwnPropertyDescriptor(context, admission)).toEqual({
+        value: token,
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      });
       return `${this.prefix}:${id}:${requireResources(context)[0]}`;
     }
     const wrapped = resourceful(read, {
@@ -133,6 +212,11 @@ describe('resource function and standard method facades', () => {
     });
     const context: RequestContext = { requestId: 'request' };
     Object.defineProperty(context, 'hidden', { value: 3, enumerable: false });
+    Object.defineProperty(context, admission, {
+      value: token,
+      enumerable: false,
+    });
+    Object.defineProperty(context, 'resources', { value: undefined });
     expect(wrapped.call(new Service(), 'abc', context)).toBe('service:abc:3');
     expect(events).toEqual(['service:abc', 'release']);
     expect(context.resources).toBeUndefined();
