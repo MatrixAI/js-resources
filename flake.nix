@@ -31,69 +31,20 @@
             pkgs.nixfmt
             pkgs.shellcheck
           ];
-          package = builtins.fromJSON (builtins.readFile ./package.json);
-          packageLock = builtins.fromJSON (builtins.readFile ./package-lock.json);
-          npmSources = import ./nix/npm-sources.nix {
-            inherit system packageLock;
-            selections = {
-              "node_modules/@matrixai/async-cancellable".name = "@matrixai/async-cancellable";
-              "node_modules/@matrixai/async-init".name = "@matrixai/async-init";
-              "node_modules/@matrixai/async-locks".name = "@matrixai/async-locks";
-              "node_modules/@matrixai/contexts".name = "@matrixai/contexts";
-              "node_modules/@matrixai/errors".name = "@matrixai/errors";
-              "node_modules/@matrixai/events".name = "@matrixai/events";
-              "node_modules/@matrixai/timer".name = "@matrixai/timer";
-            };
-          };
-          npm = import ./nix/npm-install.nix {
-            inherit pkgs;
-            packageName = package.name;
-            sources = npmSources;
-          };
-          npmDependencies = import ./nix/npm-deps.nix {
-            inherit
-              pkgs
-              nodejs
-              package
-              packageLock
-              npmSources
-              ;
-          };
-          runtimeProviders = builtins.map (selected: {
-            name = selected.archive.npmPackage.name;
-            version = selected.archive.npmPackage.version;
-            source = selected.source;
-            archiveOutput = selected.output;
-          }) (builtins.attrValues npmSources);
-          npmPackage = import ./nix/npm-package.nix {
-            inherit
-              pkgs
-              nodejs
-              npmDependencies
-              runtimeProviders
-              ;
+          npmLibrary = nixpkgs-matrixai.lib.npmBridge.producer.libraryFromRoot {
+            inherit pkgs nodejs;
             gitignore = nixpkgs-matrixai.lib.gitignore;
-            sourceProvenance = {
-              rev = if inputs.self ? dirtyRev then null else inputs.self.rev or null;
-              dirtyRev = inputs.self.dirtyRev or null;
-              narHash = inputs.self.narHash or null;
-              dirty =
-                if inputs.self ? dirtyRev then
-                  true
-                else if inputs.self ? rev then
-                  false
-                else
-                  null;
-            };
+            root = ./.;
+            self = inputs.self;
+            buildExcludeDevDependencies = [ "@matrixai/async-init" ];
           };
         in
         {
-          packages.default = npmPackage.out;
-          packages.npm-package = npmPackage.out;
-          packages.npm-package-unpacked = npmPackage.unpacked;
-          apps.npm = {
-            type = "app";
-            program = "${npm}/bin/npm";
+          packages = {
+            default = npmLibrary.npmPackage.out;
+            npm-build = npmLibrary.npmBuild;
+            npm-package = npmLibrary.npmPackage.out;
+            npm-package-unpacked = npmLibrary.npmPackage.unpacked;
           };
           formatter = lint.formatter;
           checks = import ./nix/checks {
@@ -102,9 +53,8 @@
               nodejs
               lint
               system
-              npmDependencies
+              npmLibrary
               ;
-            gitignore = nixpkgs-matrixai.lib.gitignore;
           };
           devenv.shells.default = { lib, ... }: {
             containers = lib.mkForce { };
@@ -116,12 +66,13 @@
             );
             packages = [
               nodejs
-              (pkgs.lib.hiPrio npm)
+              (pkgs.lib.hiPrio npmLibrary.npm)
               lint
               pkgs.gh
             ];
             enterShell = ''
-              export PATH="${lint}/bin:${npm}/bin:$PWD/dist/bin:$PWD/node_modules/.bin:$PATH"
+              mkdir -p "$PWD/tmp"
+              export PATH="${npmLibrary.npm}/bin:${lint}/bin:$PWD/dist/bin:$PWD/node_modules/.bin:$PATH"
             '';
           };
         };

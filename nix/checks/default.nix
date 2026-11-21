@@ -3,21 +3,17 @@
   nodejs,
   lint,
   system,
-  gitignore,
-  npmDependencies,
+  npmLibrary,
 }:
 let
-  src = gitignore.gitignoreSource ../..;
-  inherit (npmDependencies) npmDeps npmConfigHook;
   unit = pkgs.buildNpmPackage {
     pname = "resources-unit-js";
     version = "0.1.0";
     inherit
-      src
       nodejs
-      npmDeps
-      npmConfigHook
       ;
+    src = npmLibrary.src;
+    inherit (npmLibrary.npmDependencies) npmDeps npmConfigHook;
     dontNpmBuild = true;
     doCheck = true;
     checkPhase = ''
@@ -35,9 +31,9 @@ let
     '';
   };
   lintCheck = lint.mkCheck {
-    inherit src;
+    src = npmLibrary.src;
     name = "resources-lint";
-    npmDependencies = npmDependencies // {
+    npmDependencies = npmLibrary.npmDependencies // {
       inherit nodejs;
     };
   };
